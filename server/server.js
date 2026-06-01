@@ -11,8 +11,19 @@ const rentRoutes = require('./routes/rentRoutes');
 const noticeRoutes = require('./routes/noticeRoutes');
 
 
+// Normalize CLIENT_URL — strip any trailing slash to avoid CORS mismatch
+const rawClientUrl = (process.env.CLIENT_URL || '').replace(/\/$/, '');
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || '*',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (e.g. curl, Render health checks)
+    if (!origin) return callback(null, true);
+    // Allow if origin matches CLIENT_URL (with or without trailing slash)
+    if (!rawClientUrl || rawClientUrl === '*' || origin.replace(/\/$/, '') === rawClientUrl) {
+      return callback(null, true);
+    }
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 app.use(express.json());
