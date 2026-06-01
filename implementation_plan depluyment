@@ -1,0 +1,220 @@
+# Rent-Flow Deployment Plan
+
+Deploy **Frontend (React + Vite) → Vercel**, **Backend (Node + Express) → Render**, **Database (MySQL) → Aiven or Railway**.
+
+---
+
+## Code Changes Required Before Deployment
+
+These are the **source-code changes** needed so the app works correctly when deployed. No changes break local dev.
+
+---
+
+### Backend — `server/`
+
+#### [MODIFY] [server.js](file:///c:/Users/yvasa/Videos/Projects/rental-management/server/server.js)
+
+Two issues to fix:
+1. **PORT fallback** — Render dynamically assigns a port; add a fallback so `process.env.PORT` is never `undefined`.
+2. **CORS** — Lock down `cors()` to only accept requests from your Vercel frontend URL (you'll add this after deploy).
+
+```js
+// Current
+app.use(cors());
+app.listen(process.env.PORT, () => { ... });
+
+// After
+app.use(cors({
+  origin: process.env.CLIENT_URL || '*',
+  credentials: true,
+}));
+app.listen(process.env.PORT || 5000, () => { ... });
+```
+
+#### [MODIFY] [config/db.js](file:///c:/Users/yvasa/Videos/Projects/rental-management/server/config/db.js)
+
+Aiven and Railway MySQL **require SSL**. Switch from `createConnection` to a **connection pool** (more resilient for cloud), and add SSL support.
+
+```js
+// After
+const mysql = require('mysql2');
+require('dotenv').config();
+
+const db = mysql.createPool({
+  host:     process.env.DB_HOST,
+  port:     process.env.DB_PORT || 3306,
+  user:     process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+  waitForConnections: true,
+  connectionLimit: 10,
+});
+
+module.exports = db.promise();
+```
+
+> [!IMPORTANT]
+> Switching to `pool.promise()` means all controllers that currently do `db.query(...)` with a callback will need to be updated to use `async/await` or `.then()`. Check every file in `server/controllers/`.
+
+#### [NEW] [server/.env.example](file:///c:/Users/yvasa/Videos/Projects/rental-management/server/.env.example)
+
+Commit this template (without real values) so Render knows what vars are needed:
+
+```
+DB_HOST=
+DB_PORT=
+DB_USER=
+DB_PASSWORD=
+DB_NAME=
+DB_SSL=true
+JWT_SECRET=
+PORT=5000
+CLIENT_URL=
+```
+
+#### [MODIFY] [server/package.json](file:///c:/Users/yvasa/Videos/Projects/rental-management/server/package.json)
+
+Add a `start` script — Render uses this to launch your app:
+
+```json
+"scripts": {
+  "start": "node server.js",
+  "dev": "nodemon server.js"
+}
+```
+
+---
+
+### Frontend — `client/`
+
+#### [MODIFY] [client/vite.config.js](file:///c:/Users/yvasa/Videos/Projects/rental-management/client/vite.config.js)
+
+No proxy needed for production (proxy is only for local dev). But we need to ensure the build output is correct for Vercel:
+
+```js
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    outDir: 'dist',
+  },
+});
+```
+
+#### [NEW] [client/.env.production](file:///c:/Users/yvasa/Videos/Projects/rental-management/client/.env.production)
+
+All `axios` base URLs in `src/` must use an environment variable instead of `http://localhost:5000`:
+
+```
+VITE_API_URL=https://your-render-app.onrender.com
+```
+
+Then in your API calls: `axios.get(\`${import.meta.env.VITE_API_URL}/api/...\`)`
+
+> [!IMPORTANT]
+> Search `src/` for any hardcoded `localhost:5000` and replace with `import.meta.env.VITE_API_URL`.
+
+#### [NEW] [client/public/\_redirects](file:///c:/Users/yvasa/Videos/Projects/rental-management/client/public/_redirects)  *(optional — use `vercel.json` instead)*
+
+#### [NEW] [client/vercel.json](file:///c:/Users/yvasa/Videos/Projects/rental-management/client/vercel.json)
+
+Fixes React Router — without this, any direct URL like `/dashboard` returns a 404 on Vercel:
+
+```json
+{
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
+```
+
+---
+
+## Deployment Steps
+
+### Step 1 — Set Up MySQL Database
+
+**Option A — Aiven MySQL (recommended, free tier)**
+1. Sign up at [aiven.io](https://aiven.io) → Create service → MySQL → Free plan.
+2. Once running, go to **Connection Information** → copy:
+   - Host, Port, User, Password, Database name
+3. Download the **CA Certificate** if required (some drivers need it).
+4. Enable `DB_SSL=true` in your Render env vars.
+
+**Option B — Railway MySQL**
+1. Sign up at [railway.app](https://railway.app) → New Project → Add MySQL.
+2. Go to **Variables** tab → copy `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`.
+3. SSL is optional on Railway (set `DB_SSL=false` if connection fails with SSL).
+
+---
+
+### Step 2 — Deploy Backend to Render
+
+1. Push your latest code to GitHub.
+2. Go to [render.com](https://render.com) → New → **Web Service**.
+3. Connect your GitHub repo → select the `rental-management` root.
+4. Configure:
+   | Setting | Value |
+   |---|---|
+   | **Root Directory** | `server` |
+   | **Runtime** | Node |
+   | **Build Command** | `npm install` |
+   | **Start Command** | `npm start` |
+   | **Instance Type** | Free |
+5. Under **Environment Variables**, add all vars from `.env.example` using real values from your DB provider.
+6. Click **Deploy**. Note the URL: `https://your-app.onrender.com`.
+
+> [!WARNING]
+> Free-tier Render services **spin down after 15 minutes of inactivity**. First request after sleep takes ~30s. Upgrade to Starter ($7/mo) to avoid this.
+
+---
+
+### Step 3 — Deploy Frontend to Vercel
+
+1. Go to [vercel.com](https://vercel.com) → New Project → Import your GitHub repo.
+2. Configure:
+   | Setting | Value |
+   |---|---|
+   | **Root Directory** | `client` |
+   | **Framework Preset** | Vite |
+   | **Build Command** | `npm run build` |
+   | **Output Directory** | `dist` |
+3. Under **Environment Variables**, add:
+   ```
+   VITE_API_URL = https://your-app.onrender.com
+   ```
+4. Deploy. Note your Vercel URL: `https://rent-flow.vercel.app`.
+
+---
+
+### Step 4 — Update CORS on Backend
+
+After you have the Vercel URL, go to Render → your service → **Environment** → update:
+```
+CLIENT_URL = https://rent-flow.vercel.app
+```
+Trigger a redeploy.
+
+---
+
+## Open Questions
+
+> [!IMPORTANT]
+> **Do your controllers use callback-style `db.query(sql, callback)`?**
+> If yes, switching `db.js` to `pool.promise()` will break them. I can either:
+> - (A) Update all controllers to `async/await` (cleaner, recommended)
+> - (B) Keep `createConnection` with just the SSL + pool changes, keeping callbacks intact
+
+> [!IMPORTANT]
+> **Where are your `axios` base URLs defined?** Is there a central API file like `src/api.js` or `src/utils/api.js`, or is `localhost:5000` scattered across multiple components? I need to know to make the env var swap efficient.
+
+---
+
+## Verification Plan
+
+### After Backend Deploy
+- `curl https://your-app.onrender.com/` → should return `{"message":"Rental Management API is running!"}`
+- `curl https://your-app.onrender.com/api/auth/...` → test a login or register endpoint.
+
+### After Frontend Deploy
+- Visit the Vercel URL, check that login/register works end-to-end.
+- Navigate directly to a sub-route (e.g. `/dashboard`) — it should not 404 (confirms `vercel.json` rewrite works).
+- Open browser DevTools → Network tab → verify API calls hit `onrender.com`, not `localhost`.
