@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import buildingImg from '../assets/building.jpg';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import API from '../services/api';
@@ -38,7 +39,7 @@ export default function LoginPage() {
             <div
                 className="hidden lg:flex w-1/2 flex-col justify-between p-12 relative"
                 style={{
-                    backgroundImage: `url('/src/assets/building.jpg')`,
+                    backgroundImage: `url(${buildingImg})`,
                     backgroundSize: 'cover',
                     backgroundPosition: 'center',
                 }}

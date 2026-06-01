@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import buildingImg from '../assets/building.jpg';
 import { useNavigate, Link } from 'react-router-dom';
 import API from '../services/api';
 import Logo from '../components/Logo';
@@ -49,7 +50,7 @@ export default function SignupPage() {
             <div
                 className="hidden lg:flex w-1/2 flex-col justify-between p-12 relative"
                 style={{
-                    backgroundImage: `url('/src/assets/building.jpg')`,
+                    backgroundImage: `url(${buildingImg})`,
                     backgroundSize: 'cover',
                     backgroundPosition: 'center',
                 }}
